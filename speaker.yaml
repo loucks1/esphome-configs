@@ -23,3 +23,13 @@ media_player:
       num_channels: 1
     buffer_size: 32000     
     codec_support_enabled: NONE   
+
+button:    
+  - platform: template
+    name: "Play Startup Sound"
+    icon: mdi:play
+    on_press:
+      then:
+        - speaker.play:
+            id: my_speaker
+            data: !lambda return dooropened_raw;
