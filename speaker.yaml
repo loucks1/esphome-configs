@@ -26,7 +26,7 @@ media_player:
 
 button:    
   - platform: template
-    name: "Play Startup Sound"
+    name: "Play Door Opened Sound"
     icon: mdi:play
     on_press:
       then:
