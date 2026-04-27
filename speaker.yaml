@@ -1,6 +1,6 @@
 esphome:
   includes:
-    - dooropened.c
+    - dooropened.cpp
 
 i2s_audio:
   - id: i2s_bus
