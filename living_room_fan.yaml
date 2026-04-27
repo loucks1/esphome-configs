@@ -1,3 +1,9 @@
+remote_transmitter:
+  pin: GPIO14
+  # RF uses a 100% carrier signal
+  carrier_duty_percent: 100%
+  non_blocking: true
+  
 fan:
   - platform: template
     id: living_room_fan
