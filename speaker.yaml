@@ -1,6 +1,9 @@
 esphome:
   includes:
     - dooropened.cpp
+  declaration: |-
+    #include <vector>
+    extern std::vector<unsigned char> dooropened_raw;
 
 i2s_audio:
   - id: i2s_bus

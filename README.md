@@ -1,1 +1,8 @@
-"# esphome-configs" 
+Go to ProxMox
+Go to terminal in HA
+type login
+list with "docker ps | grep esphome"
+docker exec -it addon_xxxxx_esphome bash
+cd /config/esphome
+
+curl -L https://raw.githubusercontent.com/loucks1/esphome-configs/main/dooropened.cpp -o /config/esphome/dooropened.cpp 
