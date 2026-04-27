@@ -1,0 +1,151 @@
+cover:
+  - platform: template
+    name: "Deck Blinds"
+    id: deck_blinds
+    open_action: 
+      then:
+        - cover.open: deck_blind_right
+        - cover.open: deck_blind_left
+    close_action: 
+      then:
+        - cover.close: deck_blind_right
+        - cover.close: deck_blind_left
+    stop_action: 
+      then:
+        - cover.stop: deck_blind_right
+        - cover.stop: deck_blind_left
+    assumed_state: True
+
+  - platform: time_based
+    id: deck_blind_left
+    name: Deck Blind Left
+    open_duration: 50s
+    close_duration: 50s
+    has_built_in_endstop: True
+    manual_control: True
+    open_action:
+      then:
+        - cover.open: deck_blind_left_tilt
+        - delay: 2s
+        - remote_transmitter.transmit_raw:
+            code: [ 4882, -1590, 353, -722, 399, -718, 348, -727, 394, -724, 341, -731, 391, -730, 335, -736, 740, -386, 321, -745, 381, -744, 674, -386, 731, -400, 307, -749, 378, -758, 304, -751, 378, -761, 302, -753, 377, -761, 298, -759, 372, -766, 294, -758, 720, -421, 631, -410, 717, -424, 284, -762, 369, -773, 286, -763, 369, -772, 287, -761, 370, -772, 286, -763, 723, -420, 288, -757, 374, -768, 290, -758, 723, -416, 637, -402, 724, -416, 636, -410, 367 ]
+            repeat:
+              times: $deck_blind_retries
+              wait_time: 10000us
+        - globals.set: 
+            id: left_closed_issued
+            value: "false"
+    close_action: 
+      then:
+        - cover.open: deck_blind_left_tilt
+        - remote_transmitter.transmit_raw:
+            code: [ 4909, -1572, 368, -731, 363, -729, 365, -734, 360, -731, 364, -731, 369, -725, 368, -730, 713, -376, 367, -731, 363, -728, 717, -376, 711, -381, 360, -737, 358, -713, 381, -737, 358, -737, 360, -738, 357, -733, 361, -738, 356, -735, 359, -738, 712, -375, 714, -379, 710, -379, 357, -740, 360, -730, 365, -733, 361, -731, 363, -734, 361, -730, 365, -733, 709, -386, 358, -740, 354, -735, 709, -386, 702, -383, 708, -385, 702, -384, 356, -742, 353 ]
+            repeat:
+              times: $deck_blind_retries
+              wait_time: 10000us
+    stop_action: 
+      then:
+        - remote_transmitter.transmit_raw:
+            code: [ 4909, -1562, 376, -721, 370, -722, 374, -724, 367, -725, 371, -728, 363, -729, 368, -730, 714, -369, 376, -732, 359, -731, 714, -382, 701, -386, 356, -744, 347, -749, 349, -751, 339, -752, 349, -753, 337, -752, 347, -754, 335, -753, 345, -756, 688, -398, 693, -408, 674, -412, 330, -774, 315, -769, 336, -770, 319, -764, 336, -769, 321, -762, 338, -767, 668, -417, 331, -780, 656, -425, 321, -787, 651, -422, 326, -782, 657, -417, 329, -776, 667 ]
+            repeat:
+              times: $deck_blind_retries
+              wait_time: 10000us              
+    on_closed: 
+      then:
+        - globals.set: 
+            id: left_closed_issued
+            value: "true"
+        - cover.close: deck_blind_left_tilt
+
+  - platform: template
+    id: deck_blind_left_tilt
+    name: Deck Blind Left Tilt
+    open_action: 
+      then:
+        - remote_transmitter.transmit_raw:
+            code: [ 4913, -1576, 374, -740, 347, -739, 374, -739, 347, -739, 374, -740, 347, -745, 368, -744, 693, -392, 368, -745, 343, -743, 717, -393, 690, -391, 366, -747, 341, -745, 368, -745, 341, -749, 368, -746, 340, -746, 372, -741, 347, -739, 373, -739, 697, -385, 721, -386, 697, -394, 366, -747, 340, -745, 367, -746, 341, -745, 367, -746, 341, -744, 724, -384, 697, -387, 368, -746, 340, -746, 367, -745, 698, -384, 721, -386, 695, -387, 719, -391, 342 ]
+            repeat:
+              times: $deck_blind_retries
+              wait_time: 10000us
+    close_action: 
+      then:
+        - if:
+            condition:
+              lambda: return id(left_closed_issued);  
+            then:
+              - remote_transmitter.transmit_raw:
+                  code: [ 4912, -1573, 376, -740, 345, -738, 375, -741, 344, -739, 374, -742, 344, -744, 370, -746, 688, -393, 370, -747, 337, -745, 717, -396, 683, -394, 367, -748, 338, -745, 369, -747, 337, -749, 369, -748, 336, -746, 374, -743, 342, -740, 375, -740, 693, -385, 723, -389, 690, -397, 366, -749, 336, -747, 367, -750, 336, -745, 369, -748, 338, -744, 723, -389, 690, -391, 367, -749, 335, -746, 722, -388, 693, -385, 722, -390, 689, -388, 372, -745, 339 ]
+                  repeat:
+                    times: $deck_blind_retries
+                    wait_time: 10000us
+            else:
+              - logger.log: "Warning:  Left Blind has NOT been closed, cannot close Tilt."
+    optimistic: True
+    assumed_state: True
+
+  - platform: time_based
+    id: deck_blind_right
+    name: Deck Blind Right
+    open_duration: 50s
+    close_duration: 52s
+    has_built_in_endstop: True
+    manual_control: True
+    open_action:
+      then:
+        - cover.open: deck_blind_right_tilt
+        - delay: 2s
+        - remote_transmitter.transmit_raw:
+            code: [ 4889, -1575, 366, -749, 325, -749, 366, -751, 323, -748, 367, -750, 331, -742, 373, -742, 680, -392, 371, -744, 330, -743, 718, -392, 676, -396, 365, -750, 325, -749, 366, -750, 324, -753, 366, -750, 323, -750, 366, -749, 325, -750, 366, -750, 677, -390, 719, -390, 677, -394, 370, -745, 329, -745, 371, -746, 328, -745, 370, -744, 331, -749, 713, -398, 322, -754, 364, -751, 324, -750, 365, -752, 670, -395, 719, -394, 674, -392, 715, -398, 316  ]
+            repeat:
+              times: $deck_blind_retries
+              wait_time: 10000us
+        - globals.set: 
+            id: right_closed_issued
+            value: "false"
+    close_action: 
+      then:
+        - cover.open: deck_blind_right_tilt
+        - remote_transmitter.transmit_raw:
+            code: [ 4911, -1571, 368, -727, 378, -722, 369, -718, 381, -734, 358, -722, 377, -728, 365, -728, 718, -389, 351, -735, 366, -740, 701, -381, 712, -390, 348, -738, 363, -743, 350, -736, 365, -746, 349, -737, 364, -742, 349, -737, 370, -736, 356, -731, 718, -381, 707, -374, 719, -385, 355, -732, 369, -743, 348, -738, 364, -742, 349, -737, 365, -742, 699, -382, 364, -746, 349, -742, 359, -740, 707, -376, 717, -384, 702, -378, 717, -383, 354, -732, 370 ]
+            repeat:
+              times: $deck_blind_retries
+              wait_time: 10000us
+    stop_action: 
+      then:
+        - remote_transmitter.transmit_raw:
+            code: [ 4872, -1613, 332, -769, 308, -780, 335, -786, 292, -776, 343, -760, 318, -767, 348, -752, 676, -413, 350, -748, 330, -761, 699, -401, 670, -416, 343, -756, 324, -764, 349, -750, 331, -765, 348, -747, 335, -760, 349, -744, 340, -756, 352, -742, 694, -396, 705, -386, 690, -401, 357, -737, 345, -750, 359, -736, 345, -750, 360, -740, 343, -752, 704, -385, 345, -755, 354, -737, 697, -396, 354, -738, 701, -392, 355, -736, 703, -390, 356, -736, 703 ]
+            repeat:
+              times: 12
+    on_closed: 
+      then:
+        - globals.set: 
+            id: right_closed_issued
+            value: "true"
+        - cover.close: deck_blind_right_tilt
+
+  - platform: template
+    id: deck_blind_right_tilt
+    name: Deck Blind Right Tilt
+    open_action: 
+      then:
+        - remote_transmitter.transmit_raw:
+            code: [ 4914, -1587, 368, -767, 307, -762, 368, -767, 308, -762, 368, -767, 307, -763, 366, -765, 667, -404, 367, -766, 310, -760, 723, -409, 660, -404, 372, -763, 312, -757, 373, -761, 314, -759, 374, -767, 310, -760, 367, -768, 308, -761, 368, -767, 659, -406, 721, -409, 661, -406, 366, -767, 308, -762, 367, -735, 342, -760, 372, -762, 663, -402, 372, -762, 314, -757, 374, -760, 315, -762, 368, -765, 660, -407, 715, -413, 657, -407, 716, -415, 305 ]
+            repeat:
+              times: 12
+              wait_time: 10000us
+    close_action: 
+      then:
+        - if:
+            condition:
+             lambda: return id(right_closed_issued);  
+            then:
+              - remote_transmitter.transmit_raw:
+                  code: [ 4916, -1587, 367, -750, 337, -749, 368, -751, 336, -750, 367, -734, 354, -749, 369, -750, 692, -392, 368, -751, 336, -750, 723, -391, 690, -392, 371, -746, 341, -745, 373, -745, 342, -747, 374, -750, 337, -749, 368, -750, 337, -750, 368, -749, 689, -394, 722, -391, 691, -394, 367, -751, 335, -751, 367, -751, 336, -750, 373, -746, 692, -390, 372, -746, 342, -747, 374, -746, 341, -750, 716, -398, 685, -396, 715, -398, 685, -396, 366, -753, 335 ]
+                  repeat:
+                    times: 12
+                    wait_time: 10000us
+            else:
+              - logger.log: "Warning:  Right Blind has NOT been closed, cannot close Tilt."
+
+    optimistic: True
+    assumed_state: True

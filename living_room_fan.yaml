@@ -1,0 +1,79 @@
+fan:
+  - platform: template
+    id: living_room_fan
+    name: "Living Room Fan"
+    restore_mode: RESTORE_DEFAULT_OFF
+    speed_count: 3
+    on_speed_set:
+    - if:
+        condition:
+         lambda: return x == 1;
+        then:
+          - remote_transmitter.transmit_rc_switch_raw:
+              code: '000000110111' # action for speed 1 (code 55)
+              protocol: 
+                pulse_length: 10
+                sync: [51, 37]
+                zero: [45, 78]
+                one: [86, 37]
+                inverted: true
+              repeat:
+                times: 12
+                wait_time: 20ms
+    - if:
+        condition:
+         lambda: return x == 2;
+        then:
+          - remote_transmitter.transmit_rc_switch_raw:
+              code: '000000101111' # action for speed 2 (code 47)
+              protocol: 
+                pulse_length: 10
+                sync: [51, 37]
+                zero: [45, 78]
+                one: [86, 37]
+                inverted: true
+              repeat:
+                times: 12
+                wait_time: 20ms
+    - if:
+        condition:
+         lambda: return x == 3;
+        then:
+          - remote_transmitter.transmit_rc_switch_raw:
+              code: '000000011111' # action for speed 3 (code 31)
+              protocol: 
+                pulse_length: 10
+                sync: [51, 37]
+                zero: [45, 78]
+                one: [86, 37]
+                inverted: true
+              repeat:
+                times: 12
+                wait_time: 20ms
+    on_turn_on:
+      then:
+        - lambda: |-
+            id(saved_fan_speed) = id(living_room_fan).speed;  // Save current speed
+        - fan.turn_on:
+            id: living_room_fan
+            speed: 3
+        - fan.turn_on:
+            id: living_room_fan
+            speed: 1
+        - fan.turn_on:
+            id: living_room_fan
+            speed: !lambda return id(saved_fan_speed);
+          
+    on_turn_off:
+      then:
+        - remote_transmitter.transmit_rc_switch_raw:
+            code: '000000111101' # action for off (code 61)
+            protocol: 
+              pulse_length: 10
+              sync: [51, 37]
+              zero: [45, 78]
+              one: [86, 37]
+              inverted: true
+            repeat:
+              times: 12
+              wait_time: 20ms
