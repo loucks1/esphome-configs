@@ -1,0 +1,1 @@
+extern std::vector<unsigned char> dooropened_raw;
