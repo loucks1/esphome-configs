@@ -4,6 +4,16 @@ remote_transmitter:
   carrier_duty_percent: 100%
   non_blocking: true
 
+globals:
+  - id: left_closed_issued
+    type: bool
+    initial_value: "false"
+  - id: right_closed_issued
+    type: bool
+    initial_value: "false"
+  - id: saved_fan_speed
+    type: int
+
 cover:
   - platform: template
     name: "Deck Blinds"
