@@ -1,8 +1,11 @@
-Go to ProxMox
-Go to terminal in HA
-type login
-list with "docker ps | grep esphome"
-docker exec -it addon_xxxxx_esphome bash
-cd /config/esphome
+use like this:
 
-curl -L https://raw.githubusercontent.com/loucks1/esphome-configs/main/dooropened.h -o /config/esphome/dooropened.h 
+packages:
+  esphome_configs:
+    url: https://github.com/loucks1/esphome-configs
+    ref: main
+    files:
+      - deck_blinds.yaml
+      - living_room_fan.yaml
+      - speaker.yaml
+    refresh: 1s

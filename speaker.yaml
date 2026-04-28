@@ -1,6 +1,8 @@
-esphome:
-  includes:
-    - dooropened.h
+audio_file:
+  - id: dooropened_sound
+    file:
+      type: web
+      url: "https://github.com/loucks1/esphome-configs/raw/refs/heads/main/dooropened.wav"
 
 i2s_audio:
   - id: i2s_bus
@@ -27,10 +29,11 @@ media_player:
 button:    
   - platform: template
     name: "Play Door Opened Sound"
-    icon: mdi:play
+    id: play_door_sound_button
+    icon: "mdi:door-open"
     on_press:
       then:
-        - speaker.play:
-            id: my_speaker
-            data: !lambda |-
-              return std::vector<uint8_t>(dooropened_raw, dooropened_raw + dooropened_size);          
+        - media_player.speaker.play_on_device_media_file:
+            id: my_media_player          # Must match your media_player ID
+            media_file: dooropened_sound
+            announcement: true           # Recommended for on-device files
