@@ -17,6 +17,7 @@ speaker:
     channel: mono
 media_player:
   - platform: speaker
+    id: my_media_player
     name: "ESPHome I2S Media Player"
     announcement_pipeline:
       speaker: my_speaker
