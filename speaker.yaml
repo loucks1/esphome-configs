@@ -34,7 +34,9 @@ button:
     icon: "mdi:door-open"
     on_press:
       then:
+        - media_player.volume_set: 95%    
+        - delay: 1ms    
         - media_player.speaker.play_on_device_media_file:
-            id: my_media_player          # Must match your media_player ID
+            id: my_media_player          
             media_file: dooropened_sound
-            announcement: true           # Recommended for on-device files
+            announcement: true       
