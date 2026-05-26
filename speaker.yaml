@@ -21,12 +21,11 @@ media_player:
     name: "ESPHome I2S Media Player"
     announcement_pipeline:
       speaker: my_speaker
-      format: WAV          
-      sample_rate: 16000   
+      format: WAV   
+      sample_rate: 16000
       num_channels: 1
-    buffer_size: 32000     
-    codec_support_enabled: NONE   
-
+    buffer_size: 32000
+    
 button:    
   - platform: template
     name: "Play Door Opened Sound"
