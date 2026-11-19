@@ -13,7 +13,7 @@ fan:
     on_speed_set:
     - if:
         condition:
-         lambda: return x == 1;
+         lambda: return id(living_room_fan).state && x == 1;
         then:
           - remote_transmitter.transmit_rc_switch_raw:
               code: '000000110111' # action for speed 1 (code 55)
@@ -28,7 +28,7 @@ fan:
                 wait_time: 20ms
     - if:
         condition:
-         lambda: return x == 2;
+         lambda: return id(living_room_fan).state && x == 2;
         then:
           - remote_transmitter.transmit_rc_switch_raw:
               code: '000000101111' # action for speed 2 (code 47)
@@ -43,7 +43,7 @@ fan:
                 wait_time: 20ms
     - if:
         condition:
-         lambda: return x == 3;
+         lambda: return id(living_room_fan).state && x == 3;
         then:
           - remote_transmitter.transmit_rc_switch_raw:
               code: '000000011111' # action for speed 3 (code 31)
