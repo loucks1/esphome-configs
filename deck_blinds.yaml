@@ -1,3 +1,47 @@
+# Deck blind package for the Directolor ESP32.
+#
+# Tilt-before-move (firmware, not Home Assistant):
+# The slats must be open before the blind itself will move. open_action and
+# close_action of each time_based blind are the only path HA, the group cover,
+# scripts, and set-position use, so the check cannot be skipped. Stop does not
+# open the tilt. Tilt open/close only transmit; they never command a blind, so
+# this cannot recurse.
+#
+# Timing:
+# time_based starts its position integrator in start_direction_() before these
+# actions run. A delay inside the action would otherwise count as travel.
+# While the tilt opens, the matching duration is stretched to
+# deck_blind_timer_pause_ms (24h). Elapsed wait then adds a negligible fraction
+# of travel. The real duration is restored immediately before the blind's RF
+# command, so the configured 50s/52s starts with the motor. Stop, or a reverse
+# command, aborts the waiting action (so the RF is not sent) and restores the
+# real durations.
+#
+# The tilt covers are optimistic, so their reported position becomes open as
+# soon as the command is accepted. Waiting on that position would return
+# immediately. left_tilt_settled / right_tilt_settled become true only after
+# deck_blind_tilt_duration, which is the previous fixed 2s open delay.
+#
+# Restore:
+# time_based has no restore_mode key. setup() always applies the saved position
+# and does not run open/close/stop, so a reboot does not move a blind.
+# Template covers use restore_mode RESTORE (not RESTORE_AND_CALL, which would
+# repeat the last command and transmit). Nothing in on_boot transmits.
+
+substitutions:
+  # How long the slats take to finish opening. Override from the device config.
+  deck_blind_tilt_duration: 2s
+  # Safety net for wait_until. Longer than the tilt travel.
+  deck_blind_tilt_wait_timeout: 8s
+  # Milliseconds matching the open_duration / close_duration values below.
+  deck_blind_left_open_ms: "50000"
+  deck_blind_left_close_ms: "50000"
+  deck_blind_right_open_ms: "50000"
+  deck_blind_right_close_ms: "52000"
+  # Integrator pause while the tilt opens. 24h keeps the added travel tiny and
+  # fits in a signed 32-bit millisecond count.
+  deck_blind_timer_pause_ms: "86400000"
+
 remote_transmitter:
   pin: GPIO14
   # RF uses a 100% carrier signal
@@ -7,88 +51,292 @@ remote_transmitter:
 globals:
   - id: left_closed_issued
     type: bool
+    # Remember that the blind reached closed, so a later tilt-close is allowed.
+    # Restoring the flag does not transmit; tilt RF is gated on boot_complete.
+    restore_value: true
     initial_value: "false"
   - id: right_closed_issued
     type: bool
+    restore_value: true
     initial_value: "false"
   - id: saved_fan_speed
     type: int
+    # Last speed the living-room fan actions should return to. Restoring this
+    # integer does not turn the fan on or transmit.
+    restore_value: true
+    initial_value: "0"
+  - id: directolor_blinds_boot_complete
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: left_tilt_settled
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: right_tilt_settled
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: left_tilt_gen
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: left_tilt_active
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: right_tilt_gen
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: right_tilt_active
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: left_open_gen
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: left_open_active
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: left_close_gen
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: left_close_active
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: right_open_gen
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: right_open_active
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: right_close_gen
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: right_close_active
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: left_suppress_autoclose
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: right_suppress_autoclose
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+esphome:
+  on_boot:
+    # After cover setup has restored positions. Copies that state into the
+    # tilt-settled and closed-issued flags. Does not open, close, or transmit.
+    priority: -100
+    then:
+      - lambda: |-
+          id(left_tilt_settled) = id(deck_blind_left_tilt).position >= 0.99f;
+          id(right_tilt_settled) = id(deck_blind_right_tilt).position >= 0.99f;
+          id(left_closed_issued) = id(deck_blind_left).position <= 0.001f;
+          id(right_closed_issued) = id(deck_blind_right).position <= 0.001f;
+          id(directolor_blinds_boot_complete) = true;
 
 cover:
   - platform: template
     name: "Deck Blinds"
     id: deck_blinds
-    open_action: 
+    # Derived from the children instead of optimistic. Optimistic state would
+    # stick to the last group command and drift when only one blind is moved.
+    # Open if either child is open or moving; closed only when both are fully
+    # closed and idle. The children restore their own positions, so this is
+    # correct after reboot. RESTORE only covers the moment before the first
+    # loop and does not call open/close (that would be RESTORE_AND_CALL).
+    restore_mode: RESTORE
+    assumed_state: True
+    lambda: |-
+      const bool left_active = id(deck_blind_left).position > 0.001f ||
+          id(deck_blind_left).current_operation != COVER_OPERATION_IDLE;
+      const bool right_active = id(deck_blind_right).position > 0.001f ||
+          id(deck_blind_right).current_operation != COVER_OPERATION_IDLE;
+      if (left_active || right_active)
+        return COVER_OPEN;
+      return COVER_CLOSED;
+    open_action:
       then:
         - cover.open: deck_blind_right
         - cover.open: deck_blind_left
-    close_action: 
+    close_action:
       then:
         - cover.close: deck_blind_right
         - cover.close: deck_blind_left
-    stop_action: 
+    stop_action:
       then:
         - cover.stop: deck_blind_right
         - cover.stop: deck_blind_left
-    assumed_state: True
 
   - platform: time_based
     id: deck_blind_left
     name: Deck Blind Left
-    open_duration: 50s
-    close_duration: 50s
+    # Position is restored automatically in time_based setup(). There is no
+    # restore_mode option on this platform. Restore does not run these actions.
+    open_duration: ${deck_blind_left_open_ms}ms
+    close_duration: ${deck_blind_left_close_ms}ms
     has_built_in_endstop: True
     manual_control: True
     open_action:
       then:
-        - cover.open: deck_blind_left_tilt
-        - delay: 2s
-        - remote_transmitter.transmit_raw:
-            code: [ 4882, -1590, 353, -722, 399, -718, 348, -727, 394, -724, 341, -731, 391, -730, 335, -736, 740, -386, 321, -745, 381, -744, 674, -386, 731, -400, 307, -749, 378, -758, 304, -751, 378, -761, 302, -753, 377, -761, 298, -759, 372, -766, 294, -758, 720, -421, 631, -410, 717, -424, 284, -762, 369, -773, 286, -763, 369, -772, 287, -761, 370, -772, 286, -763, 723, -420, 288, -757, 374, -768, 290, -758, 723, -416, 637, -402, 724, -416, 636, -410, 367 ]
-            repeat:
-              times: $deck_blind_retries
-              wait_time: 10000us
-        - globals.set: 
-            id: left_closed_issued
-            value: "false"
-    close_action: 
+        - lambda: |-
+            id(left_close_gen) += 1;
+            id(left_open_gen) += 1;
+            id(left_open_active) = id(left_open_gen);
+            id(deck_blind_left).set_close_duration(${deck_blind_left_close_ms});
+            id(deck_blind_left).set_open_duration(${deck_blind_timer_pause_ms});
+        - if:
+            condition:
+              lambda: 'return !id(left_tilt_settled);'
+            then:
+              - cover.open: deck_blind_left_tilt
+        - wait_until:
+            condition:
+              lambda: 'return id(left_tilt_settled);'
+            timeout: ${deck_blind_tilt_wait_timeout}
+        - if:
+            condition:
+              lambda: 'return id(left_open_active) == id(left_open_gen) && id(left_tilt_settled);'
+            then:
+              - lambda: 'id(deck_blind_left).set_open_duration(${deck_blind_left_open_ms});'
+              - remote_transmitter.transmit_raw:
+                  code: [ 4882, -1590, 353, -722, 399, -718, 348, -727, 394, -724, 341, -731, 391, -730, 335, -736, 740, -386, 321, -745, 381, -744, 674, -386, 731, -400, 307, -749, 378, -758, 304, -751, 378, -761, 302, -753, 377, -761, 298, -759, 372, -766, 294, -758, 720, -421, 631, -410, 717, -424, 284, -762, 369, -773, 286, -763, 369, -772, 287, -761, 370, -772, 286, -763, 723, -420, 288, -757, 374, -768, 290, -758, 723, -416, 637, -402, 724, -416, 636, -410, 367 ]
+                  repeat:
+                    times: $deck_blind_retries
+                    wait_time: 10000us
+              - globals.set:
+                  id: left_closed_issued
+                  value: "false"
+            else:
+              - if:
+                  condition:
+                    lambda: 'return id(left_open_active) == id(left_open_gen);'
+                  then:
+                    - logger.log: "Left tilt did not open in time; cancelling the blind move"
+                    - lambda: |-
+                        id(left_suppress_autoclose) = true;
+                        id(deck_blind_left).set_open_duration(${deck_blind_left_open_ms});
+                        id(deck_blind_left).current_operation = COVER_OPERATION_IDLE;
+                        id(deck_blind_left).publish_state();
+                        id(left_suppress_autoclose) = false;
+    close_action:
       then:
-        - cover.open: deck_blind_left_tilt
-        - remote_transmitter.transmit_raw:
-            code: [ 4909, -1572, 368, -731, 363, -729, 365, -734, 360, -731, 364, -731, 369, -725, 368, -730, 713, -376, 367, -731, 363, -728, 717, -376, 711, -381, 360, -737, 358, -713, 381, -737, 358, -737, 360, -738, 357, -733, 361, -738, 356, -735, 359, -738, 712, -375, 714, -379, 710, -379, 357, -740, 360, -730, 365, -733, 361, -731, 363, -734, 361, -730, 365, -733, 709, -386, 358, -740, 354, -735, 709, -386, 702, -383, 708, -385, 702, -384, 356, -742, 353 ]
-            repeat:
-              times: $deck_blind_retries
-              wait_time: 10000us
-    stop_action: 
+        - lambda: |-
+            id(left_open_gen) += 1;
+            id(left_close_gen) += 1;
+            id(left_close_active) = id(left_close_gen);
+            id(deck_blind_left).set_open_duration(${deck_blind_left_open_ms});
+            id(deck_blind_left).set_close_duration(${deck_blind_timer_pause_ms});
+        - if:
+            condition:
+              lambda: 'return !id(left_tilt_settled);'
+            then:
+              - cover.open: deck_blind_left_tilt
+        - wait_until:
+            condition:
+              lambda: 'return id(left_tilt_settled);'
+            timeout: ${deck_blind_tilt_wait_timeout}
+        - if:
+            condition:
+              lambda: 'return id(left_close_active) == id(left_close_gen) && id(left_tilt_settled);'
+            then:
+              - lambda: 'id(deck_blind_left).set_close_duration(${deck_blind_left_close_ms});'
+              - remote_transmitter.transmit_raw:
+                  code: [ 4909, -1572, 368, -731, 363, -729, 365, -734, 360, -731, 364, -731, 369, -725, 368, -730, 713, -376, 367, -731, 363, -728, 717, -376, 711, -381, 360, -737, 358, -713, 381, -737, 358, -737, 360, -738, 357, -733, 361, -738, 356, -735, 359, -738, 712, -375, 714, -379, 710, -379, 357, -740, 360, -730, 365, -733, 361, -731, 363, -734, 361, -730, 365, -733, 709, -386, 358, -740, 354, -735, 709, -386, 702, -383, 708, -385, 702, -384, 356, -742, 353 ]
+                  repeat:
+                    times: $deck_blind_retries
+                    wait_time: 10000us
+            else:
+              - if:
+                  condition:
+                    lambda: 'return id(left_close_active) == id(left_close_gen);'
+                  then:
+                    - logger.log: "Left tilt did not open in time; cancelling the blind move"
+                    - lambda: |-
+                        id(left_suppress_autoclose) = true;
+                        id(deck_blind_left).set_close_duration(${deck_blind_left_close_ms});
+                        id(deck_blind_left).current_operation = COVER_OPERATION_IDLE;
+                        id(deck_blind_left).publish_state();
+                        id(left_suppress_autoclose) = false;
+    stop_action:
+      # No tilt open. Restores durations in case a move was still waiting on the tilt.
       then:
+        - lambda: |-
+            id(left_open_gen) += 1;
+            id(left_close_gen) += 1;
+            id(deck_blind_left).set_open_duration(${deck_blind_left_open_ms});
+            id(deck_blind_left).set_close_duration(${deck_blind_left_close_ms});
         - remote_transmitter.transmit_raw:
             code: [ 4909, -1562, 376, -721, 370, -722, 374, -724, 367, -725, 371, -728, 363, -729, 368, -730, 714, -369, 376, -732, 359, -731, 714, -382, 701, -386, 356, -744, 347, -749, 349, -751, 339, -752, 349, -753, 337, -752, 347, -754, 335, -753, 345, -756, 688, -398, 693, -408, 674, -412, 330, -774, 315, -769, 336, -770, 319, -764, 336, -769, 321, -762, 338, -767, 668, -417, 331, -780, 656, -425, 321, -787, 651, -422, 326, -782, 657, -417, 329, -776, 667 ]
             repeat:
               times: $deck_blind_retries
-              wait_time: 10000us              
-    on_closed: 
+              wait_time: 10000us
+    on_closed:
+      # Fires on the transition to closed, including the first publish of a
+      # restored closed position. Tilt RF is skipped until boot has finished,
+      # and while a cancelled open/close publishes idle at position 0.
       then:
-        - globals.set: 
-            id: left_closed_issued
-            value: "true"
-        - cover.close: deck_blind_left_tilt
+        - if:
+            condition:
+              lambda: |-
+                return id(deck_blind_left).current_operation == COVER_OPERATION_IDLE &&
+                       !id(left_suppress_autoclose);
+            then:
+              - globals.set:
+                  id: left_closed_issued
+                  value: "true"
+              - if:
+                  condition:
+                    lambda: 'return id(directolor_blinds_boot_complete);'
+                  then:
+                    - cover.close: deck_blind_left_tilt
 
   - platform: template
     id: deck_blind_left_tilt
     name: Deck Blind Left Tilt
-    open_action: 
+    # RESTORE writes the saved position and does not run open_action/close_action.
+    restore_mode: RESTORE
+    optimistic: True
+    assumed_state: True
+    open_action:
       then:
         - remote_transmitter.transmit_raw:
             code: [ 4913, -1576, 374, -740, 347, -739, 374, -739, 347, -739, 374, -740, 347, -745, 368, -744, 693, -392, 368, -745, 343, -743, 717, -393, 690, -391, 366, -747, 341, -745, 368, -745, 341, -749, 368, -746, 340, -746, 372, -741, 347, -739, 373, -739, 697, -385, 721, -386, 697, -394, 366, -747, 340, -745, 367, -746, 341, -745, 367, -746, 341, -744, 724, -384, 697, -387, 368, -746, 340, -746, 367, -745, 698, -384, 721, -386, 695, -387, 719, -391, 342 ]
             repeat:
               times: $deck_blind_retries
               wait_time: 10000us
-    close_action: 
-      then:
         - if:
             condition:
-              lambda: return id(left_closed_issued);  
+              # Already open: repeat the RF but do not clear settled or block a blind move.
+              lambda: 'return !id(left_tilt_settled);'
             then:
+              - lambda: |-
+                  id(left_tilt_gen) += 1;
+                  id(left_tilt_active) = id(left_tilt_gen);
+              - delay: ${deck_blind_tilt_duration}
+              - lambda: |-
+                  if (id(left_tilt_active) == id(left_tilt_gen))
+                    id(left_tilt_settled) = true;
+    close_action:
+      then:
+        - lambda: 'id(left_tilt_gen) += 1;'
+        - if:
+            condition:
+              lambda: return id(left_closed_issued);
+            then:
+              - lambda: 'id(left_tilt_settled) = false;'
               - remote_transmitter.transmit_raw:
                   code: [ 4912, -1573, 376, -740, 345, -738, 375, -741, 344, -739, 374, -742, 344, -744, 370, -746, 688, -393, 370, -747, 337, -745, 717, -396, 683, -394, 367, -748, 338, -745, 369, -747, 337, -749, 369, -748, 336, -746, 374, -743, 342, -740, 375, -740, 693, -385, 723, -389, 690, -397, 366, -749, 336, -747, 367, -750, 336, -745, 369, -748, 338, -744, 723, -389, 690, -391, 367, -749, 335, -746, 722, -388, 693, -385, 722, -390, 689, -388, 372, -745, 339 ]
                   repeat:
@@ -96,65 +344,158 @@ cover:
                     wait_time: 10000us
             else:
               - logger.log: "Warning:  Left Blind has NOT been closed, cannot close Tilt."
-    optimistic: True
-    assumed_state: True
 
   - platform: time_based
     id: deck_blind_right
     name: Deck Blind Right
-    open_duration: 50s
-    close_duration: 52s
+    # Position is restored automatically in time_based setup(). There is no
+    # restore_mode option on this platform. Restore does not run these actions.
+    open_duration: ${deck_blind_right_open_ms}ms
+    close_duration: ${deck_blind_right_close_ms}ms
     has_built_in_endstop: True
     manual_control: True
     open_action:
       then:
-        - cover.open: deck_blind_right_tilt
-        - delay: 2s
-        - remote_transmitter.transmit_raw:
-            code: [ 4889, -1575, 366, -749, 325, -749, 366, -751, 323, -748, 367, -750, 331, -742, 373, -742, 680, -392, 371, -744, 330, -743, 718, -392, 676, -396, 365, -750, 325, -749, 366, -750, 324, -753, 366, -750, 323, -750, 366, -749, 325, -750, 366, -750, 677, -390, 719, -390, 677, -394, 370, -745, 329, -745, 371, -746, 328, -745, 370, -744, 331, -749, 713, -398, 322, -754, 364, -751, 324, -750, 365, -752, 670, -395, 719, -394, 674, -392, 715, -398, 316  ]
-            repeat:
-              times: $deck_blind_retries
-              wait_time: 10000us
-        - globals.set: 
-            id: right_closed_issued
-            value: "false"
-    close_action: 
+        - lambda: |-
+            id(right_close_gen) += 1;
+            id(right_open_gen) += 1;
+            id(right_open_active) = id(right_open_gen);
+            id(deck_blind_right).set_close_duration(${deck_blind_right_close_ms});
+            id(deck_blind_right).set_open_duration(${deck_blind_timer_pause_ms});
+        - if:
+            condition:
+              lambda: 'return !id(right_tilt_settled);'
+            then:
+              - cover.open: deck_blind_right_tilt
+        - wait_until:
+            condition:
+              lambda: 'return id(right_tilt_settled);'
+            timeout: ${deck_blind_tilt_wait_timeout}
+        - if:
+            condition:
+              lambda: 'return id(right_open_active) == id(right_open_gen) && id(right_tilt_settled);'
+            then:
+              - lambda: 'id(deck_blind_right).set_open_duration(${deck_blind_right_open_ms});'
+              - remote_transmitter.transmit_raw:
+                  code: [ 4889, -1575, 366, -749, 325, -749, 366, -751, 323, -748, 367, -750, 331, -742, 373, -742, 680, -392, 371, -744, 330, -743, 718, -392, 676, -396, 365, -750, 325, -749, 366, -750, 324, -753, 366, -750, 323, -750, 366, -749, 325, -750, 366, -750, 677, -390, 719, -390, 677, -394, 370, -745, 329, -745, 371, -746, 328, -745, 370, -744, 331, -749, 713, -398, 322, -754, 364, -751, 324, -750, 365, -752, 670, -395, 719, -394, 674, -392, 715, -398, 316  ]
+                  repeat:
+                    times: $deck_blind_retries
+                    wait_time: 10000us
+              - globals.set:
+                  id: right_closed_issued
+                  value: "false"
+            else:
+              - if:
+                  condition:
+                    lambda: 'return id(right_open_active) == id(right_open_gen);'
+                  then:
+                    - logger.log: "Right tilt did not open in time; cancelling the blind move"
+                    - lambda: |-
+                        id(right_suppress_autoclose) = true;
+                        id(deck_blind_right).set_open_duration(${deck_blind_right_open_ms});
+                        id(deck_blind_right).current_operation = COVER_OPERATION_IDLE;
+                        id(deck_blind_right).publish_state();
+                        id(right_suppress_autoclose) = false;
+    close_action:
       then:
-        - cover.open: deck_blind_right_tilt
-        - remote_transmitter.transmit_raw:
-            code: [ 4911, -1571, 368, -727, 378, -722, 369, -718, 381, -734, 358, -722, 377, -728, 365, -728, 718, -389, 351, -735, 366, -740, 701, -381, 712, -390, 348, -738, 363, -743, 350, -736, 365, -746, 349, -737, 364, -742, 349, -737, 370, -736, 356, -731, 718, -381, 707, -374, 719, -385, 355, -732, 369, -743, 348, -738, 364, -742, 349, -737, 365, -742, 699, -382, 364, -746, 349, -742, 359, -740, 707, -376, 717, -384, 702, -378, 717, -383, 354, -732, 370 ]
-            repeat:
-              times: $deck_blind_retries
-              wait_time: 10000us
-    stop_action: 
+        - lambda: |-
+            id(right_open_gen) += 1;
+            id(right_close_gen) += 1;
+            id(right_close_active) = id(right_close_gen);
+            id(deck_blind_right).set_open_duration(${deck_blind_right_open_ms});
+            id(deck_blind_right).set_close_duration(${deck_blind_timer_pause_ms});
+        - if:
+            condition:
+              lambda: 'return !id(right_tilt_settled);'
+            then:
+              - cover.open: deck_blind_right_tilt
+        - wait_until:
+            condition:
+              lambda: 'return id(right_tilt_settled);'
+            timeout: ${deck_blind_tilt_wait_timeout}
+        - if:
+            condition:
+              lambda: 'return id(right_close_active) == id(right_close_gen) && id(right_tilt_settled);'
+            then:
+              - lambda: 'id(deck_blind_right).set_close_duration(${deck_blind_right_close_ms});'
+              - remote_transmitter.transmit_raw:
+                  code: [ 4911, -1571, 368, -727, 378, -722, 369, -718, 381, -734, 358, -722, 377, -728, 365, -728, 718, -389, 351, -735, 366, -740, 701, -381, 712, -390, 348, -738, 363, -743, 350, -736, 365, -746, 349, -737, 364, -742, 349, -737, 370, -736, 356, -731, 718, -381, 707, -374, 719, -385, 355, -732, 369, -743, 348, -738, 364, -742, 349, -737, 365, -742, 699, -382, 364, -746, 349, -742, 359, -740, 707, -376, 717, -384, 702, -378, 717, -383, 354, -732, 370 ]
+                  repeat:
+                    times: $deck_blind_retries
+                    wait_time: 10000us
+            else:
+              - if:
+                  condition:
+                    lambda: 'return id(right_close_active) == id(right_close_gen);'
+                  then:
+                    - logger.log: "Right tilt did not open in time; cancelling the blind move"
+                    - lambda: |-
+                        id(right_suppress_autoclose) = true;
+                        id(deck_blind_right).set_close_duration(${deck_blind_right_close_ms});
+                        id(deck_blind_right).current_operation = COVER_OPERATION_IDLE;
+                        id(deck_blind_right).publish_state();
+                        id(right_suppress_autoclose) = false;
+    stop_action:
+      # No tilt open. Restores durations in case a move was still waiting on the tilt.
       then:
+        - lambda: |-
+            id(right_open_gen) += 1;
+            id(right_close_gen) += 1;
+            id(deck_blind_right).set_open_duration(${deck_blind_right_open_ms});
+            id(deck_blind_right).set_close_duration(${deck_blind_right_close_ms});
         - remote_transmitter.transmit_raw:
             code: [ 4872, -1613, 332, -769, 308, -780, 335, -786, 292, -776, 343, -760, 318, -767, 348, -752, 676, -413, 350, -748, 330, -761, 699, -401, 670, -416, 343, -756, 324, -764, 349, -750, 331, -765, 348, -747, 335, -760, 349, -744, 340, -756, 352, -742, 694, -396, 705, -386, 690, -401, 357, -737, 345, -750, 359, -736, 345, -750, 360, -740, 343, -752, 704, -385, 345, -755, 354, -737, 697, -396, 354, -738, 701, -392, 355, -736, 703, -390, 356, -736, 703 ]
             repeat:
               times: 12
-    on_closed: 
+    on_closed:
       then:
-        - globals.set: 
-            id: right_closed_issued
-            value: "true"
-        - cover.close: deck_blind_right_tilt
+        - if:
+            condition:
+              lambda: |-
+                return id(deck_blind_right).current_operation == COVER_OPERATION_IDLE &&
+                       !id(right_suppress_autoclose);
+            then:
+              - globals.set:
+                  id: right_closed_issued
+                  value: "true"
+              - if:
+                  condition:
+                    lambda: 'return id(directolor_blinds_boot_complete);'
+                  then:
+                    - cover.close: deck_blind_right_tilt
 
   - platform: template
     id: deck_blind_right_tilt
     name: Deck Blind Right Tilt
-    open_action: 
+    restore_mode: RESTORE
+    optimistic: True
+    assumed_state: True
+    open_action:
       then:
         - remote_transmitter.transmit_raw:
             code: [ 4914, -1587, 368, -767, 307, -762, 368, -767, 308, -762, 368, -767, 307, -763, 366, -765, 667, -404, 367, -766, 310, -760, 723, -409, 660, -404, 372, -763, 312, -757, 373, -761, 314, -759, 374, -767, 310, -760, 367, -768, 308, -761, 368, -767, 659, -406, 721, -409, 661, -406, 366, -767, 308, -762, 367, -735, 342, -760, 372, -762, 663, -402, 372, -762, 314, -757, 374, -760, 315, -762, 368, -765, 660, -407, 715, -413, 657, -407, 716, -415, 305 ]
             repeat:
               times: 12
               wait_time: 10000us
-    close_action: 
-      then:
         - if:
             condition:
-             lambda: return id(right_closed_issued);  
+              lambda: 'return !id(right_tilt_settled);'
             then:
+              - lambda: |-
+                  id(right_tilt_gen) += 1;
+                  id(right_tilt_active) = id(right_tilt_gen);
+              - delay: ${deck_blind_tilt_duration}
+              - lambda: |-
+                  if (id(right_tilt_active) == id(right_tilt_gen))
+                    id(right_tilt_settled) = true;
+    close_action:
+      then:
+        - lambda: 'id(right_tilt_gen) += 1;'
+        - if:
+            condition:
+             lambda: return id(right_closed_issued);
+            then:
+              - lambda: 'id(right_tilt_settled) = false;'
               - remote_transmitter.transmit_raw:
                   code: [ 4916, -1587, 367, -750, 337, -749, 368, -751, 336, -750, 367, -734, 354, -749, 369, -750, 692, -392, 368, -751, 336, -750, 723, -391, 690, -392, 371, -746, 341, -745, 373, -745, 342, -747, 374, -750, 337, -749, 368, -750, 337, -750, 368, -749, 689, -394, 722, -391, 691, -394, 367, -751, 335, -751, 367, -751, 336, -750, 373, -746, 692, -390, 372, -746, 342, -747, 374, -746, 341, -750, 716, -398, 685, -396, 715, -398, 685, -396, 366, -753, 335 ]
                   repeat:
@@ -162,6 +503,3 @@ cover:
                     wait_time: 10000us
             else:
               - logger.log: "Warning:  Right Blind has NOT been closed, cannot close Tilt."
-
-    optimistic: True
-    assumed_state: True
