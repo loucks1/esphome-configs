@@ -16,6 +16,10 @@ speaker:
     i2s_dout_pin: GPIO25
     channel: mono
 media_player:
+  # The speaker media player has no restore_mode key. setup() loads the saved
+  # volume and mute from flash (volume_initial, default 50%, is only the
+  # first-boot fallback) and then forces playback to idle. A reboot does not
+  # resume audio or replay the door sound, and it does not transmit RF.
   - platform: speaker
     id: my_media_player
     name: "ESPHome I2S Media Player"
@@ -26,7 +30,11 @@ media_player:
       num_channels: 1
     buffer_size: 32000
     
-button:    
+button:
+  # Template buttons are stateless. There is no restore_mode. on_press runs
+  # only when the button is pressed, never from boot restore.
+  # The I2S bus, the i2s_audio speaker, and the door-opened audio file have no
+  # user-facing state to persist.
   - platform: template
     name: "Play Door Opened Sound"
     id: play_door_sound_button
